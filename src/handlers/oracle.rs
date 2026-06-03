@@ -11,6 +11,30 @@ pub async fn submit(
 ) -> Json<serde_json::Value> {
     let wallet = &claims.sub;
 
+    // Validate that the submitter is a registered oracle
+    let is_whitelisted = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM oracle_whitelist WHERE wallet_address = $1 AND is_active = true)"
+    )
+    .bind(wallet)
+    .fetch_one(&state.db)
+    .await;
+
+    match is_whitelisted {
+        Ok(true) => {}
+        Ok(false) => {
+            return Json(serde_json::json!({
+                "accepted": false,
+                "error": "wallet is not a registered oracle"
+            }));
+        }
+        Err(e) => {
+            return Json(serde_json::json!({
+                "accepted": false,
+                "error": format!("failed to verify oracle: {}", e)
+            }));
+        }
+    }
+
     let result = sqlx::query(
         "INSERT INTO oracle_submissions (oracle_wallet, city_code, price, confidence, source, timestamp)
          VALUES ($1, $2, $3, $4, $5, $6)"
