@@ -1,3 +1,5 @@
+pub mod rate_limit;
+
 use axum::{
     extract::Request,
     http::{header::AUTHORIZATION, StatusCode},

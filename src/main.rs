@@ -1,8 +1,10 @@
-use axum::{routing::{get, post, delete}, Router};
+use axum::{middleware, routing::{get, post, delete}, Router};
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+use middleware::rate_limit::{RateLimitRule, RateLimiter};
 
 mod db;
 mod handlers;
@@ -68,6 +70,30 @@ async fn main() -> anyhow::Result<()> {
     let ws_hub = ws::Hub::new();
     let ws_handle = ws_hub.start();
 
+    // Rate limiter — in-memory per-IP token bucket.
+    // Auth endpoints are tighter (10 req burst, 0.2 req/s refill ≈ 12/min).
+    // Default for everything else: 60 req burst, 1 req/s refill.
+    let rate_limiter = RateLimiter::new(
+        60.0,
+        1.0,
+        vec![
+            (
+                "/api/v1/auth/challenge".into(),
+                RateLimitRule {
+                    max_burst: 10.0,
+                    refill_per_sec: 0.2,
+                },
+            ),
+            (
+                "/api/v1/auth/token".into(),
+                RateLimitRule {
+                    max_burst: 10.0,
+                    refill_per_sec: 0.2,
+                },
+            ),
+        ],
+    );
+
     // Routes
     let app = Router::new()
         // Auth
@@ -100,6 +126,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/v1/analytics/traders", get(handlers::analytics::top_traders))
         // WebSocket
         .route("/ws", get(ws::ws_handler))
+        .layer(middleware::from_fn_with_state(
+            rate_limiter,
+            middleware::rate_limit::rate_limit_ip,
+        ))
         .layer(CorsLayer::permissive())
         .with_state(state);
 
