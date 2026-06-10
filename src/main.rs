@@ -49,7 +49,8 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("connected to PostgreSQL");
 
     // Run migrations
-    sqlx::migrate!("./migrations").run(&db).await.ok();
+    sqlx::migrate!("./migrations").run(&db).await
+        .map_err(|e| anyhow::anyhow!("migration failed: {}", e))?;
     tracing::info!("migrations applied");
 
     // Redis
