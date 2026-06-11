@@ -1,5 +1,6 @@
 use axum::{
     extract::Request,
+    extract::State,
     http::{header::AUTHORIZATION, StatusCode},
     middleware::Next,
     response::Response,
@@ -10,7 +11,10 @@ use crate::models::Claims;
 
 /// JWT authentication middleware.
 /// Extracts the Bearer token, validates it, and injects claims into request extensions.
+/// Intended to be used with `axum::middleware::from_fn_with_state` so that
+/// the JWT secret is read from `AppState` rather than from request extensions.
 pub async fn jwt_auth(
+    State(state): State<crate::AppState>,
     mut req: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
@@ -24,12 +28,7 @@ pub async fn jwt_auth(
         .strip_prefix("Bearer ")
         .ok_or(StatusCode::UNAUTHORIZED)?;
 
-    // Get JWT secret from extensions (set by AppState)
-    let secret = req
-        .extensions()
-        .get::<String>()
-        .cloned()
-        .unwrap_or_else(|| "change-me".into());
+    let secret = &state.jwt_secret;
 
     let token_data = decode::<Claims>(
         token,
