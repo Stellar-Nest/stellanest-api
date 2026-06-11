@@ -1,23 +1,45 @@
-use axum::{extract::State, Json};
+use axum::{extract::State, Extension, Json};
 
 use crate::AppState;
-use crate::models::OracleSubmitRequest;
+use crate::models::{Claims, OracleSubmitRequest};
 
 /// POST /api/v1/oracle/submit
 pub async fn submit(
     State(state): State<AppState>,
+    Extension(claims): Extension<Claims>,
     Json(req): Json<OracleSubmitRequest>,
 ) -> Json<serde_json::Value> {
-    // TODO:
-    // 1. Verify oracle is registered
-    // 2. Validate price/confidence ranges
-    // 3. Insert into oracle_submissions
-    // 4. Trigger on-chain aggregation if enough submissions
+    let wallet = &claims.sub;
+
+    // Validate that the submitter is a registered oracle
+    let is_whitelisted = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM oracle_whitelist WHERE wallet_address = $1 AND is_active = true)"
+    )
+    .bind(wallet)
+    .fetch_one(&state.db)
+    .await;
+
+    match is_whitelisted {
+        Ok(true) => {}
+        Ok(false) => {
+            return Json(serde_json::json!({
+                "accepted": false,
+                "error": "wallet is not a registered oracle"
+            }));
+        }
+        Err(e) => {
+            return Json(serde_json::json!({
+                "accepted": false,
+                "error": format!("failed to verify oracle: {}", e)
+            }));
+        }
+    }
 
     let result = sqlx::query(
         "INSERT INTO oracle_submissions (oracle_wallet, city_code, price, confidence, source, timestamp)
-         VALUES ('unknown', $1, $2, $3, $4, $5)"
+         VALUES ($1, $2, $3, $4, $5, $6)"
     )
+    .bind(wallet)
     .bind(&req.city)
     .bind(req.price)
     .bind(req.confidence)

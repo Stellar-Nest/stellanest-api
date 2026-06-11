@@ -1,4 +1,4 @@
-use axum::{routing::{get, post, delete}, Router};
+use axum::{middleware, routing::{get, post, delete}, Router};
 use sqlx::postgres::PgPoolOptions;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
@@ -69,8 +69,8 @@ async fn main() -> anyhow::Result<()> {
     let ws_hub = ws::Hub::new();
     let ws_handle = ws_hub.start();
 
-    // Routes
-    let app = Router::new()
+    // Public routes
+    let public_routes = Router::new()
         // Auth
         .route("/api/v1/auth/challenge", post(handlers::auth::challenge))
         .route("/api/v1/auth/token", post(handlers::auth::token))
@@ -80,27 +80,34 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/v1/indices/:city", get(handlers::index::get))
         .route("/api/v1/indices/:city/history", get(handlers::index::history))
         .route("/api/v1/indices/compare", get(handlers::index::compare))
-        // Positions (authenticated)
-        .route("/api/v1/positions/open", post(handlers::position::open))
-        .route("/api/v1/positions/:id/close", post(handlers::position::close))
-        .route("/api/v1/positions/my", get(handlers::position::my))
-        .route("/api/v1/positions/:id", get(handlers::position::get))
-        // Orders (authenticated)
-        .route("/api/v1/orders", post(handlers::order::create))
-        .route("/api/v1/orders/:id", delete(handlers::order::cancel))
-        .route("/api/v1/orders/my", get(handlers::order::my))
-        .route("/api/v1/orders/book/:city", get(handlers::order::book))
-        .route("/api/v1/orders/recent/:city", get(handlers::order::recent))
-        // Oracle (authenticated)
-        .route("/api/v1/oracle/submit", post(handlers::oracle::submit))
-        .route("/api/v1/oracle/prices", get(handlers::oracle::prices))
-        .route("/api/v1/oracle/status", get(handlers::oracle::status))
         // Analytics (public)
         .route("/api/v1/analytics/volume", get(handlers::analytics::volume))
         .route("/api/v1/analytics/open-interest", get(handlers::analytics::open_interest))
         .route("/api/v1/analytics/traders", get(handlers::analytics::top_traders))
         // WebSocket
-        .route("/ws", get(ws::ws_handler))
+        .route("/ws", get(ws::ws_handler));
+
+    // Authenticated routes (JWT required)
+    let authenticated_routes = Router::new()
+        // Positions
+        .route("/api/v1/positions/open", post(handlers::position::open))
+        .route("/api/v1/positions/:id/close", post(handlers::position::close))
+        .route("/api/v1/positions/my", get(handlers::position::my))
+        .route("/api/v1/positions/:id", get(handlers::position::get))
+        // Orders
+        .route("/api/v1/orders", post(handlers::order::create))
+        .route("/api/v1/orders/:id", delete(handlers::order::cancel))
+        .route("/api/v1/orders/my", get(handlers::order::my))
+        .route("/api/v1/orders/book/:city", get(handlers::order::book))
+        .route("/api/v1/orders/recent/:city", get(handlers::order::recent))
+        // Oracle
+        .route("/api/v1/oracle/submit", post(handlers::oracle::submit))
+        .route("/api/v1/oracle/prices", get(handlers::oracle::prices))
+        .route("/api/v1/oracle/status", get(handlers::oracle::status))
+        .route_layer(middleware::from_fn(middleware::jwt_auth));
+
+    let app = public_routes
+        .merge(authenticated_routes)
         .layer(CorsLayer::permissive())
         .with_state(state);
 
