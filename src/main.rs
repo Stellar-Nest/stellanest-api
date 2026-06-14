@@ -18,6 +18,7 @@ pub struct AppState {
     pub redis: redis::aio::Connection,
     pub jwt_secret: String,
     pub stellar_network: String,
+    pub ws_hub: Arc<ws::Hub>,
 }
 
 #[tokio::main]
@@ -58,19 +59,29 @@ async fn main() -> anyhow::Result<()> {
     let redis_conn = redis_client.get_async_connection().await?;
     tracing::info!("connected to Redis");
 
+    // WebSocket hub
+    let ws_hub = ws::Hub::new();
+    let ws_handle = ws_hub.start();
+
     let state = AppState {
         db,
         redis: redis_conn,
         jwt_secret,
         stellar_network,
+        ws_hub: ws_handle,
     };
 
+<<<<<<< HEAD
     // WebSocket hub
     let ws_hub = ws::Hub::new();
     let ws_handle = ws_hub.start();
 
     // Public routes
     let public_routes = Router::new()
+=======
+    // Routes
+    let app = Router::new()
+>>>>>>> 1db3b6e (feat(ws): wire WebSocket Hub into AppState and implement pub/sub)
         // Auth
         .route("/api/v1/auth/challenge", post(handlers::auth::challenge))
         .route("/api/v1/auth/token", post(handlers::auth::token))

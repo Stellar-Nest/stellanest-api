@@ -67,7 +67,9 @@ pub async fn ws_handler(
 
 async fn handle_socket(socket: WebSocket, state: crate::AppState) {
     let (mut sender, mut receiver) = socket.split();
-    let mut subscriptions: Vec<tokio::sync::mpsc::Receiver<WsMessage>> = vec![];
+
+    // Track active subscriptions: channel name -> abort handle for the forwarding task
+    let mut subscriptions: HashMap<String, tokio::task::AbortHandle> = HashMap::new();
 
     // Spawn task to forward messages to client
     let (tx, mut rx) = tokio::sync::mpsc::channel::<WsMessage>(64);
@@ -81,18 +83,44 @@ async fn handle_socket(socket: WebSocket, state: crate::AppState) {
     });
 
     // Handle incoming messages (subscriptions)
-    let tx_clone = tx.clone();
+    let hub = state.ws_hub.clone();
     let recv_task = tokio::spawn(async move {
         while let Some(Ok(msg)) = receiver.next().await {
             if let Message::Text(text) = msg {
                 if let Ok(ws_msg) = serde_json::from_str::<WsMessage>(&text) {
                     match ws_msg.msg_type.as_str() {
                         "subscribe" => {
-                            // TODO: Subscribe to channel via Hub
-                            tracing::info!("subscribe to channel: {}", ws_msg.channel);
+                            let channel = ws_msg.channel.clone();
+                            tracing::info!("subscribe to channel: {}", channel);
+
+                            // Skip if already subscribed
+                            if subscriptions.contains_key(&channel) {
+                                continue;
+                            }
+
+                            // Get or create broadcast channel on the hub
+                            let bcast_tx = hub.get_or_create_channel(&channel).await;
+                            let mut bcast_rx = bcast_tx.subscribe();
+
+                            // Spawn a task to forward broadcast messages to this client
+                            let fwd_tx = tx.clone();
+                            let fwd_task = tokio::spawn(async move {
+                                while let Ok(bcast_msg) = bcast_rx.recv().await {
+                                    if fwd_tx.send(bcast_msg).await.is_err() {
+                                        break;
+                                    }
+                                }
+                            });
+
+                            subscriptions.insert(channel, fwd_task.abort_handle());
                         }
                         "unsubscribe" => {
-                            tracing::info!("unsubscribe from channel: {}", ws_msg.channel);
+                            let channel = ws_msg.channel.clone();
+                            tracing::info!("unsubscribe from channel: {}", channel);
+
+                            if let Some(handle) = subscriptions.remove(&channel) {
+                                handle.abort();
+                            }
                         }
                         _ => {}
                     }
